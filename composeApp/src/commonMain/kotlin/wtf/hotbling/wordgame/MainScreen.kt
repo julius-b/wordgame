@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.touchlab.kermit.Logger
@@ -95,6 +96,7 @@ class MainPresenter(
     @Composable
     override fun present(): MainScreen.State {
         val scope = rememberStableCoroutineScope()
+        val uriHandler = LocalUriHandler.current
         var loading by rememberRetained { mutableStateOf(false) }
         var manualPrompt by rememberRetained { mutableStateOf(false) }
         val snackbarHostState = remember { SnackbarHostState() }
@@ -149,11 +151,8 @@ class MainPresenter(
                     }
                 }
 
-                GoToSource -> {
-
-                }
-
                 ToggleManual -> manualPrompt = !manualPrompt
+                GoToSource -> uriHandler.openUri("https://github.com/julius-b/wordgame")
             }
         }
     }

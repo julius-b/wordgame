@@ -31,22 +31,29 @@ fun main() {
 }
 
 fun setupKeyListener() {
-    window.addEventListener("keydown", { event ->
+    window.addEventListener("keydown") { event ->
         event as KeyboardEvent
         MainScope().launch {
             val key = when {
-                event.key == "Backspace" -> Char.MAX_VALUE
-                event.key == "Enter" -> Char.MIN_VALUE
+                event.key == "Backspace" -> KeyPress.Backspace()
+                event.key == "Enter" -> KeyPress.Enter()
                 event.key.length != 1 -> {
-                    println("E: kef: unexpected key: ${event.key}")
+                    println("[ERR] pressed key unexpected: ${event.key}")
                     null
                 }
 
-                else -> event.keyCode.toChar()
+                else -> {
+                    val char = event.keyCode.toChar()
+                    if (!char.isLetter()) {
+                        println("[WRN] pressed key not a letter: $char")
+                        return@launch
+                    }
+                    KeyPress.Letter(char.lowercaseChar())
+                }
             }
             if (key != null) KeyPressObserver.updateKey(key)
         }
-    })
+    }
 }
 
 actual fun setPath(path: String) {

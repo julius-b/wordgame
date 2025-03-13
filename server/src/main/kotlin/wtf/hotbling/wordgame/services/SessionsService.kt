@@ -25,6 +25,7 @@ import wtf.hotbling.wordgame.api.ApiSession
 import wtf.hotbling.wordgame.api.ApiSessionWord
 import wtf.hotbling.wordgame.api.ApiSessionWord2
 import wtf.hotbling.wordgame.api.Error
+import wtf.hotbling.wordgame.api.Keyboard
 import wtf.hotbling.wordgame.api.err
 import wtf.hotbling.wordgame.plugins.DatabaseSingleton.tx
 import java.util.UUID
@@ -160,7 +161,7 @@ class SessionsService {
             this.sessionId = session.id
             this.accountId = account.id
             this.pos = (latest?.pos ?: -1) + 1
-        }.toDTO(session.words.map { it.txt })
+        }.toDTO()
     }
 
     suspend fun addPeer(sessionId: UUID, accountId: UUID): Error? = tx {
@@ -184,6 +185,10 @@ class SessionsService {
 
         return@tx null
     }
+
+    suspend fun count() = tx {
+        Session.count()
+    }
 }
 
 
@@ -205,10 +210,6 @@ fun Session.toDTO(): ApiSession {
                 it.keyboard
             )
         },
-        //  .zip(simpleGuesses.map { it.second }).map { (a, b) -> ApiSessionWord2(
-        //            if (peer == null) null else a.word, a.guesses.mapIndexed { (k, v) -> ApiGuess(v, b) }, a.keyboard
-        //        ) }
-        //guesses,
         createdAt
     )
 }
@@ -253,8 +254,7 @@ fun buildCloud(word: String, guess: String): List<ApiCharStatus> {
     return cloud
 }
 
-// TODO build on top of clouds, fill all results in map<char> if better :)
-fun buildKeyboard(ratings: List<List<ApiChar>>): Map<Char, ApiCharStatus> {
+fun buildKeyboard(ratings: List<List<ApiChar>>): Keyboard {
     val board = mutableMapOf<Char, ApiCharStatus>()
     for (rating in ratings) {
         for (char in rating) {
@@ -267,22 +267,7 @@ fun buildKeyboard(ratings: List<List<ApiChar>>): Map<Char, ApiCharStatus> {
     return board
 }
 
-fun Guess.toDTO(words: List<String>) = ApiGuess.from(txt, accountId.value, words)
-
-// TODO test
-fun ApiGuess.Companion.from(guess: String, accountId: UUID, words: List<String>) = ApiGuess(
-    words.map { word ->
-        guess.toCharArray().mapIndexed { i, c ->
-            ApiChar(
-                c, when {
-                    c == word[i] -> ApiCharStatus.Correct
-                    // TODO allPositionsMatched for this c, if true then wrong
-                    word.contains(c) -> ApiCharStatus.Kinda
-                    else -> ApiCharStatus.Wrong
-                }
-            )
-        }
-    }, accountId.toKotlinUuid()
-)
+fun Guess.toDTO() =
+    ApiGuess(txt, accountId.value.toKotlinUuid(), sessionId.value.toKotlinUuid(), pos)
 
 val sessionsService = SessionsService()

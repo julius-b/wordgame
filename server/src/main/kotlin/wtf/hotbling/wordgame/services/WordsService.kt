@@ -8,6 +8,7 @@ import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.dao.id.UUIDTable
 import org.jetbrains.exposed.sql.Random
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import wtf.hotbling.wordgame.api.ApiWord
 import wtf.hotbling.wordgame.plugins.DatabaseSingleton.tx
 import java.util.UUID
@@ -53,8 +54,17 @@ class WordsService {
     suspend fun random(solution: Boolean?): ApiWord = tx {
         val wordIt = if (solution == null) Word.all()
         else Word.find { Words.solution eq solution }
+        // orderBy approach guarantees no dups are selected
         val word = wordIt.orderBy(Random() to SortOrder.ASC).limit(1).first()
         return@tx ApiWord(word.id.value.toKotlinUuid(), word.txt, word.solution)
+    }
+
+    suspend fun count() = tx {
+        Word.count()
+    }
+
+    suspend fun countSolutions() = tx {
+        Word.count(Words.solution eq true)
     }
 }
 

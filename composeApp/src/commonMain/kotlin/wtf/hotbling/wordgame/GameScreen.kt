@@ -45,6 +45,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -66,6 +68,8 @@ import com.slack.circuit.runtime.presenter.Presenter
 import com.slack.circuit.runtime.screen.Screen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import me.tatarka.inject.annotations.Assisted
 import me.tatarka.inject.annotations.Inject
 import software.amazon.lastmile.kotlin.inject.anvil.AppScope
@@ -81,6 +85,7 @@ import wtf.hotbling.wordgame.api.ApiCharStatus
 import wtf.hotbling.wordgame.api.ApiSession
 import wtf.hotbling.wordgame.api.ConnectionUpdate
 import wtf.hotbling.wordgame.api.Domain
+import wtf.hotbling.wordgame.api.Keyboard
 import wtf.hotbling.wordgame.api.RepoResult
 import wtf.hotbling.wordgame.api.SessionRepository
 import wtf.hotbling.wordgame.components.SimpleDialog
@@ -132,9 +137,19 @@ data class GameScreen(val sessionId: Uuid) : Screen {
 }
 
 sealed interface KeyPress {
-    data object Enter : KeyPress
-    data object Backspace : KeyPress
-    data class Letter(val char: Char) : KeyPress
+    // ensure different KeyPresses are never the same, necessary for StateFlow
+    // TODO consider MutableSharedFlow<KeyPress>(replay = 1)
+    val createdAt: Instant
+
+    data class Enter(override val createdAt: Instant = Clock.System.now()) : KeyPress
+    data class Backspace(override val createdAt: Instant = Clock.System.now()) : KeyPress
+    data class Letter(val char: Char, override val createdAt: Instant = Clock.System.now()) :
+        KeyPress {
+        init {
+            require(char.isLetter())
+            require(char.isLowerCase())
+        }
+    }
 }
 
 @CircuitInject(GameScreen::class, AppScope::class)
@@ -201,9 +216,7 @@ class GamePresenter(
                 val rows: List<List<GuessRow>> = rememberRetained(guess, session) {
                     List(4) { quadrant ->
                         val list: MutableList<GuessRow> = mutableListOf()
-                        //for (attempt in session!!.guesses) {
                         for (attempt in session!!.words[quadrant].guesses) {
-                            //list += GuessRow.Attempt(attempt.shards[quadrant], attempt.accountId)
                             list += GuessRow.Attempt(attempt.first, attempt.second)
                         }
                         list += GuessRow.Current(guess)
@@ -214,50 +227,53 @@ class GamePresenter(
                     }
                 }
 
+                fun handleKeyPress(key: KeyPress) {
+                    if (session!!.turnId != selfId!!) {
+                        log.w { "not this account's turn" }
+                        return
+                    }
+                    when (key) {
+                        is KeyPress.Enter -> {
+                            if (guess.length != 5) return
+                            if (loading) return
+                            loading = true
+                            scope.launch {
+                                val account =
+                                    sessionRepository.createGuess(session!!.id, guess)
+                                if (account !is RepoResult.Data) {
+                                    showSnackbar("No internet, please try again later")
+                                    return@launch
+                                }
+                                guess = ""
+                            }.invokeOnCompletion {
+                                loading = false
+                            }
+                        }
+
+                        is KeyPress.Backspace -> {
+                            if (guess.isNotEmpty())
+                                guess = guess.dropLast(1)
+                        }
+
+                        is KeyPress.Letter -> {
+                            if (guess.length > 4) return
+                            guess += key.char
+                        }
+                    }
+                }
+
                 // TODO integrate with circuit eventSink
                 LaunchedEffect(Unit) {
-                    KeyPressObserver.keyPressed.collect {
-                        if (guess.length > 4) return@collect
-                        guess += it
+                    KeyPressObserver.clear()
+                    KeyPressObserver.keyPressed.collect { key ->
+                        if (key == null) return@collect
+                        handleKeyPress(key)
                     }
                 }
 
                 Game(selfId!!, session!!, guess, rows, snackbarHostState) { event ->
                     when (event) {
-                        is Key -> {
-                            if (session!!.turnId != selfId!!) {
-                                log.w { "not this account's turn" }
-                                return@Game
-                            }
-                            when (event.key) {
-                                KeyPress.Enter -> {
-                                    if (guess.length != 5) return@Game
-                                    if (loading) return@Game
-                                    loading = true
-                                    scope.launch {
-                                        val account =
-                                            sessionRepository.createGuess(session!!.id, guess)
-                                        if (account !is RepoResult.Data) {
-                                            showSnackbar("No internet, please try again later")
-                                            return@launch
-                                        }
-                                        guess = ""
-                                    }.invokeOnCompletion {
-                                        loading = false
-                                    }
-                                }
-
-                                KeyPress.Backspace -> {
-                                    if (guess.isNotEmpty())
-                                        guess = guess.dropLast(1)
-                                }
-
-                                is KeyPress.Letter -> {
-                                    if (guess.length > 4) return@Game
-                                    guess += event.key.char
-                                }
-                            }
-                        }
+                        is Key -> handleKeyPress(event.key)
                     }
                 }
             }
@@ -323,7 +339,7 @@ fun GameView(state: GameScreen.State, modifier: Modifier = Modifier) {
 @Composable
 fun ActionView(state: Game) {
     Column(
-        modifier = Modifier.width(800.dp).padding(horizontal = 8.dp),
+        modifier = Modifier.width(700.dp).padding(horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // TODO LazyGrid? don't need the Lazy part...
@@ -331,13 +347,13 @@ fun ActionView(state: Game) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            GuessesView(
+            CloudsView(
                 modifier = Modifier.weight(1f),
                 //state.session.guesses.map { it.shards.map { it[0] } },
                 state.rows[0]
             )
             Spacer(Modifier.width(12.dp))
-            GuessesView(
+            CloudsView(
                 modifier = Modifier.weight(1f),
                 state.rows[1]
             )
@@ -347,26 +363,23 @@ fun ActionView(state: Game) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            GuessesView(
+            CloudsView(
                 modifier = Modifier.weight(1f),
                 state.rows[2]
             )
             Spacer(Modifier.width(12.dp))
-            GuessesView(
+            CloudsView(
                 modifier = Modifier.weight(1f),
                 state.rows[3]
             )
         }
         Spacer(Modifier.height(16.dp))
-        KeyBoard(onKey = { state.eventSink(Key(it)) })
+        KeyboardView(state.session.words.map { it.keyboard }, onKey = { state.eventSink(Key(it)) })
     }
 }
 
 @Composable
-fun GuessesView(
-    modifier: Modifier,
-    rows: List<GuessRow>
-) {
+fun CloudsView(modifier: Modifier, rows: List<GuessRow>) {
     Column(modifier.wrapContentWidth()) {
         val shape = RoundedCornerShape(12.dp)
         for (row in rows) {
@@ -397,8 +410,8 @@ fun GuessesView(
                         )
                     }
                     val text = when (row) {
-                        is GuessRow.Attempt -> row.chars.getOrNull(i)?.char ?: ' '
-                        is GuessRow.Current -> row.chars.getOrElse(i) { ' ' }
+                        is GuessRow.Attempt -> row.chars.getOrNull(i)?.char?.uppercaseChar() ?: ' '
+                        is GuessRow.Current -> row.chars.getOrElse(i) { ' ' }.uppercaseChar()
                         GuessRow.Empty -> ' '
                     }.toString()
                     Box(
@@ -421,7 +434,7 @@ fun GuessesView(
 }
 
 @Composable
-fun KeyBoard(onKey: (KeyPress) -> Unit) {
+fun KeyboardView(keyboards: List<Keyboard>, onKey: (KeyPress) -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -431,13 +444,13 @@ fun KeyBoard(onKey: (KeyPress) -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // TODO Key.Letter, Key.Action, send action to screen, render action as emoji
-            val keyboard = arrayOf(
+            val keys = arrayOf(
                 arrayOf('Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'),
                 arrayOf('A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'),
                 arrayOf('<', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '¬')
             )
 
-            for (row in keyboard) {
+            for (row in keys) {
                 Row(
                     modifier = Modifier
                         // boxes simply exceed it, draw into neighboring row
@@ -448,40 +461,31 @@ fun KeyBoard(onKey: (KeyPress) -> Unit) {
                     horizontalArrangement = Arrangement.Center,
                 ) {
                     for (key in row) {
-                        // TODO server should return this as a state info, all guessed letters & their state
-                        //val attempts = guesses.filterIsInstance<Guess.Attempt>()
-                        //val letters = attempts.flatMap { it.letters.filter { it.letter == key } }
-                        //val isGreen = letters.any { it.status == LetterStatus.Green }
-                        //val isYellow = letters.any { it.status == LetterStatus.Yellow }
-                        //val isGrey = letters.any { it.status == LetterStatus.Grey }
-                        val isGreen = true
-                        val isYellow = true
-                        val isGrey = true
                         // TODO adaptive spacing
                         Box(
                             modifier = Modifier
                                 .padding(horizontal = 2.dp)
                                 //.aspectRatio(16f / 9f)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(if (isGreen) ColorGreen else if (isYellow) ColorYellow else if (isGrey) ColorKeyMiss else ColorKey)
                                 .weight(1f)
                                 .clickable {
                                     onKey(
                                         when (key) {
-                                            '¬' -> KeyPress.Enter
-                                            '<' -> KeyPress.Backspace
-                                            else -> KeyPress.Letter(key)
+                                            '¬' -> KeyPress.Enter()
+                                            '<' -> KeyPress.Backspace()
+                                            else -> KeyPress.Letter(key.lowercaseChar())
                                         }
                                     )
                                 }
-                            /*.drawBehind {
-                                val quadrantSize = size / 2F
-                                drawRect(
-                                    topLeft = Offset(quadrantSize.width, quadrantSize.height),
-                                    color = ColorGreen,
-                                    size = quadrantSize
-                                )
-                            }*/,
+                                .drawBehind {
+                                    val quadrantSize = size / 2F
+                                    drawRect(
+                                        // when(keyboard[i]) { null -> DefaultGrey}
+                                        topLeft = Offset(quadrantSize.width, quadrantSize.height),
+                                        color = ColorGreen,
+                                        size = quadrantSize
+                                    )
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(

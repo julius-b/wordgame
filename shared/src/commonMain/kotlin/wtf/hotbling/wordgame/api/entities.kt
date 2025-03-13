@@ -9,6 +9,8 @@ import kotlinx.serialization.Serializable
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
+typealias Keyboard = Map<Char, ApiCharStatus>
+
 @Resource("accounts")
 class Accounts {
     @Resource("{id}")
@@ -69,7 +71,7 @@ data class SessionParams(
 data class ApiSessionWord2(
     val word: String?,
     val guesses: List<Pair<List<ApiChar>, Uuid>>,
-    val keyboard: Map<Char, ApiCharStatus>
+    val keyboard: Keyboard
 )
 
 // TODO DAO
@@ -78,14 +80,15 @@ data class ApiSessionWord(
     // revealed when session is done
     val word: String?,
     val guesses: List<List<ApiChar>>,
-    val keyboard: Map<Char, ApiCharStatus>
+    val keyboard: Keyboard
 )
 
 @Serializable
 data class ApiGuess(
-    // same order as ApiSession.words
-    val shards: List<List<ApiChar>>,
-    val accountId: Uuid
+    val txt: String,
+    @SerialName("account_id") val accountId: Uuid,
+    @SerialName("session_id") val sessionId: Uuid,
+    val pos: Int
 )
 
 @Serializable
@@ -119,4 +122,11 @@ data class ApiWord(
     val id: Uuid,
     val txt: String,
     val solution: Boolean
+)
+
+@Serializable
+data class ApiStatus(
+    val platform: String,
+    val dev: Boolean,
+    val entities: Map<String, Long>
 )

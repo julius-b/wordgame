@@ -2,11 +2,14 @@ package wtf.hotbling.wordgame.plugins
 
 import io.ktor.server.application.Application
 import io.ktor.util.logging.KtorSimpleLogger
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import wtf.hotbling.wordgame.plugins.DatabaseSingleton.tx
 import wtf.hotbling.wordgame.services.wordsService
 import java.io.File
 import java.util.Scanner
+
+const val DevModeWordsLimit = 30
 
 fun Application.configureWords() {
     val log = KtorSimpleLogger("cfg-words")
@@ -29,15 +32,16 @@ fun Application.configureWords() {
 
 private suspend fun Application.saveWords(wordlist: File, solution: Boolean): Pair<Int, Int> {
     val log = KtorSimpleLogger("cfg-words-save")
+    log.info("dev mode: $developmentMode")
 
     var saved = 0
     var errs = 0
     val sc = Scanner(wordlist)
-    while (sc.hasNextLine()) {
+    // TODO ctrl-c ineffective
+    while (isActive && sc.hasNextLine()) {
         val line = sc.nextLine()
         if (line.startsWith('#')) continue
-        // TODO dev only
-        if (saved >= 30) continue
+        if (developmentMode && saved >= DevModeWordsLimit) break
 
         val valid = line.length == 5 && line.isLetters()
         if (!valid) {

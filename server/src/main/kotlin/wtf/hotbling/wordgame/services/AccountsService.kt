@@ -43,6 +43,10 @@ class AccountsService {
             this.name = name
         }.toDTO()
     }
+
+    suspend fun count() = tx {
+        Account.count()
+    }
 }
 
 fun Account.toDTO() = ApiAccount(

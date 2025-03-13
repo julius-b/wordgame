@@ -22,8 +22,7 @@ This is a Kotlin Multiplatform project targeting Android, Web, Desktop, Server.
 - prod push: `rsync -a --exclude build . root@hotbling.wtf:~/code/wordgame`
 
 ## TODO
-- dev mode: file (maybe .nowords) to prevent reloading words when a single entry exists / disable 30 words limit
-- don't return `word` via api until solved
+- don't return `word` via api until solved (set solved)
 - server-side error handling, in routes & services
 - server: no busy loop
 - full Android app (deeplink...)

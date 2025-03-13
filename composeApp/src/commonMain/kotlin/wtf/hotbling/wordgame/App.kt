@@ -63,11 +63,15 @@ fun WordGameApp(circuit: Circuit) {
 }
 
 object KeyPressObserver {
-    private val _keyPressed = MutableStateFlow<Char?>(null)
-    val keyPressed: StateFlow<Char?> get() = _keyPressed
+    private val _keyPressed = MutableStateFlow<KeyPress?>(null)
+    val keyPressed: StateFlow<KeyPress?> get() = _keyPressed
 
-    fun updateKey(key: Char) {
+    fun updateKey(key: KeyPress) {
         _keyPressed.value = key
+    }
+
+    fun clear() {
+        _keyPressed.value = null
     }
 }
 
