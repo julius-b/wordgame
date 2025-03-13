@@ -9,11 +9,13 @@ plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.kotlinParcelize)
 }
 
 kotlin {
     androidTarget {
-        @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
         }
@@ -51,19 +53,63 @@ kotlin {
         commonMain.dependencies {
             implementation(compose.runtime)
             implementation(compose.foundation)
-            implementation(compose.material)
+            implementation(compose.material3)
+            implementation(compose.material3AdaptiveNavigationSuite)
+            implementation(libs.material3.window.size)
             implementation(compose.ui)
             implementation(compose.components.resources)
             implementation(compose.components.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.androidx.lifecycle.runtime.compose)
+            implementation(libs.circuit.foundation)
+            implementation(libs.circuit.codegen.annotations)
+            implementation(libs.kotlin.inject.runtime)
+            implementation(libs.kotlin.inject.anvil.runtime)
+            implementation(libs.kotlin.inject.anvil.runtime.optional)
+            implementation(libs.ktor.client)
+            implementation(libs.ktor.client.auth)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.client.logging)
+            implementation(libs.ktor.client.resources)
+            implementation(libs.ktor.client.websockets)
+            implementation(libs.ktor.serialization.kotlinx.json)
+            implementation(libs.kermit)
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.datetime)
+            implementation(libs.multiplatform.settings)
+            implementation(libs.multiplatform.settings.no.arg)
+            implementation(libs.multiplatform.settings.serialization)
             implementation(projects.shared)
         }
         desktopMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
+            implementation(libs.ktor.client.cio)
         }
     }
+
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+        compilerOptions {
+            kotlin.sourceSets.all {
+                freeCompilerArgs.addAll(
+                    "-opt-in=kotlin.uuid.ExperimentalUuidApi",
+                    "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+                    "-opt-in=androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi",
+                    "-Xexpect-actual-classes"
+                )
+            }
+        }
+    }
+}
+
+ksp {
+    arg("me.tatarka.inject.generateCompanionExtensions", "true")
+    arg("circuit.codegen.lenient", "true")
+    arg("circuit.codegen.mode", "kotlin_inject_anvil")
+    arg(
+        "kotlin-inject-anvil-contributing-annotations",
+        "com.slack.circuit.codegen.annotations.CircuitInject"
+    )
 }
 
 android {
@@ -94,6 +140,14 @@ android {
 }
 
 dependencies {
+    // https://developer.android.com/studio/write/java8-support#library-desugaring
+    //coreLibraryDesugaring(libs.desugar)
+
+    ksp(libs.kotlin.inject.compiler)
+    ksp(libs.kotlin.inject.anvil.compiler)
+    api(libs.circuit.codegen.annotations)
+    ksp(libs.circuit.codegen)
+
     debugImplementation(compose.uiTooling)
 }
 
