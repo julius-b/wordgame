@@ -8,13 +8,20 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import wtf.hotbling.wordgame.api.ApiCharStatus
+import wtf.hotbling.wordgame.di.AndroidApplicationComponent
 
 class MainActivity : ComponentActivity() {
+
+    private val applicationComponent: AndroidApplicationComponent by lazy {
+        (applicationContext as ClipboardApplication).component
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         setContent {
-            App()
+            applicationComponent.wordGameApp()
         }
     }
 }
@@ -23,6 +30,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppAndroidPreview() {
     //MainScreen()
+}
+
+@Preview
+@org.jetbrains.compose.ui.tooling.preview.Preview
+@Composable
+fun KeyboardPreview() {
+    KeyboardView(
+        listOf(
+            mapOf('A' to ApiCharStatus.Correct, 'T' to ApiCharStatus.Correct),
+            mapOf('A' to ApiCharStatus.Correct, 'T' to ApiCharStatus.Kinda),
+            mapOf('A' to ApiCharStatus.Correct, 'T' to ApiCharStatus.Wrong),
+            mapOf('A' to ApiCharStatus.Correct)
+        ), onKey = {})
 }
 
 actual fun setPath(path: String) {}

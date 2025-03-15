@@ -9,7 +9,8 @@ version = "1.0.0"
 
 application {
     mainClass.set("wtf.hotbling.wordgame.ApplicationKt")
-    applicationDefaultJvmArgs = listOf("-Dio.ktor.development=${extra["io.ktor.development"] ?: "false"}")
+    applicationDefaultJvmArgs =
+        listOf("-Dio.ktor.development=${extra["io.ktor.development"] ?: "false"}")
 }
 
 ktor {
@@ -37,6 +38,7 @@ dependencies {
     implementation(libs.exposed.kotlin.datetime)
     implementation(libs.postgresql)
     implementation(libs.h2)
+    implementation(libs.arrow.core)
     //testImplementation(libs.ktor.server.tests)
     testImplementation(libs.kotlin.test.junit)
 }

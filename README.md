@@ -15,18 +15,22 @@ This is a Kotlin Multiplatform project targeting Android, Web, Desktop, Server.
 
 ## Commands
 - wasmJs (dev): `./gradlew :composeApp:wasmJsBrowserDevelopmentRun`
-- desktop (dev jar): `./gradlew :composeApp:packageUberJarForCurrentOS && java -jar ./composeApp/build/compose/jars/wtf.hotbling.wordgame-linux-x64-1.0.0.jar`
+- desktop (dev): `./gradlew :composeApp:run`
+  - jar: `./gradlew :composeApp:packageUberJarForCurrentOS && java -jar ./composeApp/build/compose/jars/wtf.hotbling.wordgame-linux-x64-1.0.0.jar`
 - server: `./gradlew :server:run`
-- server (dev jar): `./gradlew :server:buildFatJar && (cd server && java -jar -Dio.ktor.development=true ./build/libs/server-all.jar)`
-- prod run: `./gradlew clean wasmJsBrowserDevelopmentExecutableDistribution :server:publishImageToLocalRegistry && docker compose up -d`
+  - jar: `./gradlew :server:buildFatJar && (cd server && java -jar -Dio.ktor.development=true ./build/libs/server-all.jar)`
+  - combine with: `./gradlew wasmJsBrowserDevelopmentExecutableDistribution`
+- prod run: `./gradlew clean wasmJsBrowserDistribution :server:publishImageToLocalRegistry && docker compose up -d`
 - prod push: `rsync -a --exclude build . root@hotbling.wtf:~/code/wordgame`
 
 ## TODO
+- solo mode
 - don't return `word` via api until solved (set solved)
 - server-side error handling, in routes & services
 - server: no busy loop
 - full Android app (deeplink...)
 - auth :)
+- eliminate `!!` by capturing variables
 
 ## Bash Client
 
@@ -82,6 +86,11 @@ output=$(curl -s -d '{"account_id":"'$account_id'"}' -H "Content-Type: applicati
 echo "$output"
 export session_id=$(jq -r '.data.id' <<< "$output")
 echo "session_id: $session_id"
+```
+
+#### Connect (real-time)
+```shell
+websocat "$ws_host?Session=$session_id&Account=$account_id"
 ```
 
 ### Guesses Api

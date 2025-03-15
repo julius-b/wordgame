@@ -7,13 +7,14 @@ import org.jetbrains.exposed.dao.UUIDEntityClass
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.dao.id.UUIDTable
 import wtf.hotbling.wordgame.api.ApiAccount
+import wtf.hotbling.wordgame.api.NameMaxLen
 import wtf.hotbling.wordgame.plugins.DatabaseSingleton.tx
 import java.util.UUID
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.toKotlinUuid
 
 object Accounts : UUIDTable() {
-    val name = varchar("name", 50)
+    val name = varchar("name", NameMaxLen)
 }
 
 class Account(id: EntityID<UUID>) : UUIDEntity(id) {

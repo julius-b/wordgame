@@ -40,7 +40,7 @@ services:
       db:
         condition: service_healthy
   db:
-    image: postgres
+    image: postgres:17
     volumes:
       - pg-volume:/var/lib/postgresql/data
       #- ./tmp/db:/var/lib/postgresql/data

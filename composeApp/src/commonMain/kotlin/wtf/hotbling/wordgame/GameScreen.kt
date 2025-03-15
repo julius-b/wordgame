@@ -22,20 +22,27 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -73,22 +81,28 @@ import kotlinx.datetime.Instant
 import me.tatarka.inject.annotations.Assisted
 import me.tatarka.inject.annotations.Inject
 import software.amazon.lastmile.kotlin.inject.anvil.AppScope
+import wtf.hotbling.wordgame.GameScreen.GameEvent.Back
 import wtf.hotbling.wordgame.GameScreen.GameEvent.Key
+import wtf.hotbling.wordgame.GameScreen.GameEvent.ToggleAccount
+import wtf.hotbling.wordgame.GameScreen.GameEvent.UpdateAccount
 import wtf.hotbling.wordgame.GameScreen.LoadingEvent.Cancel
 import wtf.hotbling.wordgame.GameScreen.LoadingEvent.CopyLink
 import wtf.hotbling.wordgame.GameScreen.LoadingEvent.Join
 import wtf.hotbling.wordgame.GameScreen.State.Game
 import wtf.hotbling.wordgame.GameScreen.State.Loading
 import wtf.hotbling.wordgame.api.AccountRepository
+import wtf.hotbling.wordgame.api.ApiAccount
 import wtf.hotbling.wordgame.api.ApiChar
 import wtf.hotbling.wordgame.api.ApiCharStatus
 import wtf.hotbling.wordgame.api.ApiSession
 import wtf.hotbling.wordgame.api.ConnectionUpdate
 import wtf.hotbling.wordgame.api.Domain
 import wtf.hotbling.wordgame.api.Keyboard
+import wtf.hotbling.wordgame.api.NameMaxLen
 import wtf.hotbling.wordgame.api.RepoResult
 import wtf.hotbling.wordgame.api.SessionRepository
 import wtf.hotbling.wordgame.components.SimpleDialog
+import wtf.hotbling.wordgame.parcel.CommonParcelize
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -100,6 +114,7 @@ sealed interface GuessRow {
     data object Empty : GuessRow
 }
 
+@CommonParcelize
 data class GameScreen(val sessionId: Uuid) : Screen {
     sealed interface State : CircuitUiState {
         val selfId: Uuid?
@@ -117,7 +132,10 @@ data class GameScreen(val sessionId: Uuid) : Screen {
 
         data class Game(
             override val selfId: Uuid,
+            val self: ApiAccount,
+            val peer: ApiAccount,
             val session: ApiSession,
+            val accountPrompt: Boolean,
             val guess: String,
             val rows: List<List<GuessRow>>,
             override val snackbarHostState: SnackbarHostState,
@@ -133,6 +151,9 @@ data class GameScreen(val sessionId: Uuid) : Screen {
 
     sealed interface GameEvent : CircuitUiEvent {
         data class Key(val key: KeyPress) : GameEvent
+        data object ToggleAccount : GameEvent
+        data class UpdateAccount(val name: String) : GameEvent
+        data object Back : GameEvent
     }
 }
 
@@ -166,10 +187,12 @@ class GamePresenter(
     override fun present(): GameScreen.State {
         val scope = rememberStableCoroutineScope()
         var loading by rememberRetained { mutableStateOf(false) }
-        log.i { "init: ${accountRepository.getAccountIdSync()}" }
-        // session creator has account-it
-        var selfId: Uuid? by rememberRetained { mutableStateOf(accountRepository.getAccountIdSync()) }
+        log.i { "self: ${accountRepository.getAccountIdSync()}" }
+        // session creator has account-id, peer might not
+        // only session.<init/peer>.name is updated
+        var selfId by rememberRetained { mutableStateOf(accountRepository.getAccountIdSync()) }
         var session: ApiSession? by rememberRetained { mutableStateOf(null) }
+        var accountPrompt by rememberRetained { mutableStateOf(false) }
         val snackbarHostState = remember { SnackbarHostState() }
 
         fun showSnackbar(text: String) {
@@ -180,6 +203,7 @@ class GamePresenter(
         }
 
         LaunchedEffect(selfId) {
+            setPath("room/${screen.sessionId}")
             // never set to null
             if (selfId == null) return@LaunchedEffect
             sessionRepository.connect(
@@ -211,6 +235,7 @@ class GamePresenter(
 
         return when {
             selfId != null && session != null && peerId != null -> {
+                val selfId = selfId!!
                 // TODO capture non-null
                 var guess by rememberRetained { mutableStateOf("") }
                 val rows: List<List<GuessRow>> = rememberRetained(guess, session) {
@@ -228,7 +253,7 @@ class GamePresenter(
                 }
 
                 fun handleKeyPress(key: KeyPress) {
-                    if (session!!.turnId != selfId!!) {
+                    if (session!!.turnId != selfId) {
                         log.w { "not this account's turn" }
                         return
                     }
@@ -238,13 +263,18 @@ class GamePresenter(
                             if (loading) return
                             loading = true
                             scope.launch {
-                                val account =
-                                    sessionRepository.createGuess(session!!.id, guess)
-                                if (account !is RepoResult.Data) {
-                                    showSnackbar("No internet, please try again later")
-                                    return@launch
+                                val account = sessionRepository.createGuess(session!!.id, guess)
+                                when (account) {
+                                    is RepoResult.Data<*> -> {
+                                        // session.turnId not sufficient, updates too late
+                                        // this is bad but next server update will fix it
+                                        session = session!!.copy(turnId = Uuid.NIL)
+                                        guess = ""
+                                    }
+
+                                    is RepoResult.ValidationError -> showSnackbar("not a word")
+                                    else -> showSnackbar("No internet, please try again later")
                                 }
-                                guess = ""
                             }.invokeOnCompletion {
                                 loading = false
                             }
@@ -267,13 +297,41 @@ class GamePresenter(
                     KeyPressObserver.clear()
                     KeyPressObserver.keyPressed.collect { key ->
                         if (key == null) return@collect
+                        if (accountPrompt) return@collect
                         handleKeyPress(key)
                     }
                 }
 
-                Game(selfId!!, session!!, guess, rows, snackbarHostState) { event ->
+                Game(
+                    selfId,
+                    if (selfId == session!!.init.id) session!!.init else session!!.peer!!,
+                    if (selfId == session!!.init.id) session!!.peer!! else session!!.init,
+                    session!!,
+                    accountPrompt,
+                    guess,
+                    rows,
+                    snackbarHostState
+                ) { event ->
                     when (event) {
+                        is UpdateAccount -> {
+                            if (loading) return@Game
+                            loading = true
+                            scope.launch {
+                                // regular session updates will do the rest
+                                val account = accountRepository.saveAccount(event.name)
+                                if (account !is RepoResult.Data) {
+                                    showSnackbar("No internet, please try again later")
+                                    return@launch
+                                }
+                                accountPrompt = false
+                            }.invokeOnCompletion {
+                                loading = false
+                            }
+                        }
+
                         is Key -> handleKeyPress(event.key)
+                        ToggleAccount -> accountPrompt = !accountPrompt
+                        Back -> navigator.pop()
                     }
                 }
             }
@@ -339,9 +397,15 @@ fun GameView(state: GameScreen.State, modifier: Modifier = Modifier) {
 @Composable
 fun ActionView(state: Game) {
     Column(
-        modifier = Modifier.width(700.dp).padding(horizontal = 8.dp),
+        modifier = Modifier.width(700.dp).padding(horizontal = 8.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        if (state.accountPrompt) AccountPrompt(state)
+        GameBar(state)
+        Spacer(Modifier.height(12.dp))
+        val windowSize = calculateWindowSizeClass()
+        val horizontalSpacing =
+            if (windowSize.widthSizeClass > WindowWidthSizeClass.Compact) 12.dp else 6.dp
         // TODO LazyGrid? don't need the Lazy part...
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -352,13 +416,13 @@ fun ActionView(state: Game) {
                 //state.session.guesses.map { it.shards.map { it[0] } },
                 state.rows[0]
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(horizontalSpacing))
             CloudsView(
                 modifier = Modifier.weight(1f),
                 state.rows[1]
             )
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
@@ -367,7 +431,7 @@ fun ActionView(state: Game) {
                 modifier = Modifier.weight(1f),
                 state.rows[2]
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(horizontalSpacing))
             CloudsView(
                 modifier = Modifier.weight(1f),
                 state.rows[3]
@@ -375,6 +439,62 @@ fun ActionView(state: Game) {
         }
         Spacer(Modifier.height(16.dp))
         KeyboardView(state.session.words.map { it.keyboard }, onKey = { state.eventSink(Key(it)) })
+    }
+}
+
+@Composable
+fun GameBar(state: Game) {
+    val focusManager = LocalFocusManager.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.padding(6.dp).fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { state.eventSink(Back) }
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Back"
+                    )
+                }
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                Text(
+                    buildAnnotatedString {
+                        append("Teaming up with ")
+                        withStyle(style = SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                            append(state.peer.name)
+                        }
+                    },
+                    maxLines = 1
+                )
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                SuggestionChip(
+                    onClick = { },
+                    label = { Text(if (state.session.turnId == state.selfId) "Your turn" else "Their turn") }
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    state.self.name,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+                IconButton(
+                    onClick = {
+                        state.eventSink(ToggleAccount)
+
+                        // otherwise Enter to submit will reopen the modal
+                        focusManager.clearFocus()
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Face,
+                        contentDescription = "Account"
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -433,6 +553,7 @@ fun CloudsView(modifier: Modifier, rows: List<GuessRow>) {
     }
 }
 
+// correct rendering requires that each keyboard exists at least as an empty list
 @Composable
 fun KeyboardView(keyboards: List<Keyboard>, onKey: (KeyPress) -> Unit) {
     Column(
@@ -479,12 +600,25 @@ fun KeyboardView(keyboards: List<Keyboard>, onKey: (KeyPress) -> Unit) {
                                 }
                                 .drawBehind {
                                     val quadrantSize = size / 2F
-                                    drawRect(
-                                        // when(keyboard[i]) { null -> DefaultGrey}
-                                        topLeft = Offset(quadrantSize.width, quadrantSize.height),
-                                        color = ColorGreen,
-                                        size = quadrantSize
+                                    val quadrants = listOf(
+                                        Offset.Zero,
+                                        Offset(quadrantSize.width, 0f),
+                                        Offset(0f, quadrantSize.height),
+                                        Offset(quadrantSize.width, quadrantSize.height)
                                     )
+                                    for (i in keyboards.indices) {
+                                        drawRect(
+                                            topLeft = quadrants[i],
+                                            color = when (keyboards[i][key.lowercaseChar()]) {
+                                                ApiCharStatus.Correct -> ColorGreen
+                                                ApiCharStatus.Kinda -> ColorYellow
+                                                // TODO maybe swap
+                                                ApiCharStatus.Wrong -> ColorGrey2
+                                                null -> ColorGrey
+                                            },
+                                            size = quadrantSize
+                                        )
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -505,6 +639,40 @@ fun KeyboardView(keyboards: List<Keyboard>, onKey: (KeyPress) -> Unit) {
 }
 
 @Composable
+fun AccountPrompt(state: Game) {
+    SimpleDialog(
+        "Account",
+        onDismiss = { state.eventSink(ToggleAccount) }
+    ) {
+        var name by rememberRetained { mutableStateOf(state.self.name) }
+        val nameValid = name.length <= NameMaxLen
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Your name") },
+            singleLine = true,
+            isError = !nameValid,
+            leadingIcon = {
+                Icon(Icons.Default.AccountCircle, contentDescription = "")
+            },
+        )
+        Button(
+            onClick = { state.eventSink(UpdateAccount(name)) },
+            modifier = Modifier.align(Alignment.End),
+            enabled = name.isNotBlank() && nameValid,
+            shape = MaterialTheme.shapes.extraSmall
+        ) {
+            Icon(
+                Icons.Default.Done, contentDescription = ""
+            )
+            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+            Text("Save")
+        }
+    }
+}
+
+@Composable
 fun LoadingView(state: Loading) {
     when {
         state.selfId == null -> {
@@ -514,11 +682,14 @@ fun LoadingView(state: Loading) {
                 showDismiss = false
             ) {
                 var name by rememberRetained { mutableStateOf("") }
+                val nameValid = name.length <= NameMaxLen
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Enter a name") },
+                    singleLine = true,
+                    isError = !nameValid,
                     leadingIcon = {
                         Icon(Icons.Default.AccountCircle, contentDescription = "")
                     },
@@ -527,7 +698,7 @@ fun LoadingView(state: Loading) {
                 Button(
                     onClick = { state.eventSink(Join(name)) },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = name.isNotBlank() && name.length <= 50,
+                    enabled = name.isNotBlank() && nameValid,
                     // match OutlinedTextField default
                     shape = MaterialTheme.shapes.extraSmall
                 ) {

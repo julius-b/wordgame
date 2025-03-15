@@ -9,6 +9,7 @@ import io.ktor.server.resources.post
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.util.logging.KtorSimpleLogger
+import wtf.hotbling.wordgame.api.ApiErrorResponse
 import wtf.hotbling.wordgame.api.ApiSuccessResponse
 import wtf.hotbling.wordgame.api.GuessParams
 import wtf.hotbling.wordgame.api.Guesses
@@ -51,15 +52,12 @@ fun Route.sessionsApi() {
         }
         val txt = req.txt.lowercase()
 
-        val guess = sessionsService.createGuess(
+        sessionsService.createGuess(
             req.sessionId.toJavaUuid(), req.accountId.toJavaUuid(), txt
+        ).fold(
+            { err -> call.respond(HttpStatusCode.BadRequest, ApiErrorResponse(mapOf(err))) },
+            { data -> call.respond(ApiSuccessResponse(data = data)) }
         )
-        if (guess == null) {
-            call.respond(HttpStatusCode.BadRequest)
-            return@post
-        }
-
-        call.respond(ApiSuccessResponse(data = guess))
     }
 }
 

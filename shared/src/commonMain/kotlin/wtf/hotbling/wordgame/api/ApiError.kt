@@ -19,7 +19,7 @@ sealed class ApiError {
         @EncodeDefault(EncodeDefault.Mode.NEVER) override val value: String? = null,
         @EncodeDefault(EncodeDefault.Mode.NEVER) val min: Long? = null,
         @EncodeDefault(EncodeDefault.Mode.NEVER) val max: Long? = null,
-        @EncodeDefault(EncodeDefault.Mode.NEVER) val equal: String? = null
+        @EncodeDefault(EncodeDefault.Mode.NEVER) val eq: String? = null
     ) : ApiError()
 
     @Serializable
@@ -69,3 +69,6 @@ sealed class ApiError {
         @EncodeDefault(EncodeDefault.Mode.NEVER) override val value: String? = null
     ) : ApiError()
 }
+
+fun Any.constraintErr(eq: String?) = ApiError.Constraint(value = this.toString(), eq = eq)
+fun Any.referenceErr() = ApiError.Reference(value = this.toString())

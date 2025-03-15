@@ -9,6 +9,8 @@ import kotlinx.serialization.Serializable
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
+const val NameMaxLen = 20
+
 typealias Keyboard = Map<Char, ApiCharStatus>
 
 @Resource("accounts")
@@ -78,7 +80,8 @@ data class ApiSessionWord2(
 @Serializable
 data class ApiSessionWord(
     // revealed when session is done
-    val word: String?,
+    val word: String,
+    val solved: Boolean,
     val guesses: List<List<ApiChar>>,
     val keyboard: Keyboard
 )

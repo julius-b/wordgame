@@ -22,8 +22,9 @@ import java.io.File
 fun Application.configureRouting() {
     install(Resources)
     routing {
-        //staticFiles("/", File("frontend")) {
-        staticFiles("/", File("../composeApp/build/dist/wasmJs/developmentExecutable")) {
+        val frontend =
+            if (developmentMode) "../composeApp/build/dist/wasmJs/developmentExecutable" else "frontend"
+        staticFiles("/", File(frontend)) {
             // TODO test if wasm compression efficient
             // preCompressed(CompressedFileType.BROTLI, CompressedFileType.GZIP)
         }

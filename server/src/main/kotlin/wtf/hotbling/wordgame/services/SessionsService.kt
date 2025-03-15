@@ -2,6 +2,9 @@
 
 package wtf.hotbling.wordgame.services
 
+import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
 import io.ktor.util.logging.KtorSimpleLogger
 import kotlinx.datetime.Clock
 import org.jetbrains.exposed.dao.CompositeEntity
@@ -26,7 +29,9 @@ import wtf.hotbling.wordgame.api.ApiSessionWord
 import wtf.hotbling.wordgame.api.ApiSessionWord2
 import wtf.hotbling.wordgame.api.Error
 import wtf.hotbling.wordgame.api.Keyboard
+import wtf.hotbling.wordgame.api.constraintErr
 import wtf.hotbling.wordgame.api.err
+import wtf.hotbling.wordgame.api.referenceErr
 import wtf.hotbling.wordgame.plugins.DatabaseSingleton.tx
 import java.util.UUID
 import kotlin.uuid.ExperimentalUuidApi
@@ -143,10 +148,16 @@ class SessionsService {
         session.toDTO()
     }
 
-    suspend fun createGuess(sessionId: UUID, accountId: UUID, txt: String): ApiGuess? = tx {
+    suspend fun createGuess(
+        sessionId: UUID, accountId: UUID, txt: String
+    ): Either<Error, ApiGuess> = tx {
         val session = Session.findById(sessionId)!!
         val account = Account.findById(accountId)!!
-        if (session.turnId.value != accountId) return@tx null
+        if (session.turnId.value != accountId)
+            return@tx ("accountId" err accountId.constraintErr(eq = "turn")).left()
+
+        if (Word.find { Words.txt eq txt }.none())
+            return@tx ("txt" err txt.referenceErr()).left()
 
         val latest = Guess.find {
             Guesses.sessionId eq sessionId
@@ -161,7 +172,7 @@ class SessionsService {
             this.sessionId = session.id
             this.accountId = account.id
             this.pos = (latest?.pos ?: -1) + 1
-        }.toDTO()
+        }.toDTO().right()
     }
 
     suspend fun addPeer(sessionId: UUID, accountId: UUID): Error? = tx {
@@ -191,21 +202,22 @@ class SessionsService {
     }
 }
 
-
 fun Session.toDTO(): ApiSession {
-    //val guesses = guesses.map { guess -> guess.toDTO(words.map { it.txt }) }
     val simpleGuesses = guesses.map { Pair(it.txt, it.accountId.value) }
     return ApiSession(
         id.value.toKotlinUuid(),
         init.toDTO(),
         peer?.toDTO(),
         turnId.value.toKotlinUuid(),
-        // TODO word null while state != done
-        //words.map { ApiSessionWord(if (peer == null) null else it.txt, emptyList(), emptyMap()) },
+        // TODO word null while state != solved
         swords.map { it.toDTO(simpleGuesses.map { it.first }) }.map {
             ApiSessionWord2(
-                it.word,
-                it.guesses.zip(simpleGuesses.map { it.second })
+                if (it.solved) it.word else null,
+                it.guesses
+                    .whileTake { guess ->
+                        guess.map { it.char }.toCharArray().concatToString() != it.word
+                    }
+                    .zip(simpleGuesses.map { it.second })
                     .map { (a, b) -> Pair(a, b.toKotlinUuid()) },
                 it.keyboard
             )
@@ -214,11 +226,12 @@ fun Session.toDTO(): ApiSession {
     )
 }
 
-fun SessionWordEntity.toDTO(guesses: List<String>, reveal: Boolean = false): ApiSessionWord {
+fun SessionWordEntity.toDTO(guesses: List<String>): ApiSessionWord {
     val clouds = buildClouds(word.txt, guesses)
     val guessRatings = cloudsToRatings(clouds, guesses)
     return ApiSessionWord(
-        if (reveal) word.txt else null,
+        word.txt,
+        solved,
         guessRatings,
         buildKeyboard(guessRatings)
     )
@@ -269,5 +282,15 @@ fun buildKeyboard(ratings: List<List<ApiChar>>): Keyboard {
 
 fun Guess.toDTO() =
     ApiGuess(txt, accountId.value.toKotlinUuid(), sessionId.value.toKotlinUuid(), pos)
+
+// similar to kotlin's `takeWhile`
+inline fun <T> Iterable<T>.whileTake(predicate: (T) -> Boolean): List<T> {
+    val list = ArrayList<T>()
+    for (item in this) {
+        list.add(item)
+        if (!predicate(item)) break
+    }
+    return list
+}
 
 val sessionsService = SessionsService()

@@ -61,12 +61,15 @@ import wtf.hotbling.wordgame.MainScreen.Event.JoinSession
 import wtf.hotbling.wordgame.MainScreen.Event.ToggleManual
 import wtf.hotbling.wordgame.api.AccountRepository
 import wtf.hotbling.wordgame.api.ApiSession
+import wtf.hotbling.wordgame.api.NameMaxLen
 import wtf.hotbling.wordgame.api.RepoResult
 import wtf.hotbling.wordgame.api.SessionRepository
 import wtf.hotbling.wordgame.components.SimpleDialog
+import wtf.hotbling.wordgame.parcel.CommonParcelize
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
+@CommonParcelize
 data object MainScreen : Screen {
     data class State(
         val loading: Boolean,
@@ -111,6 +114,7 @@ class MainPresenter(
         // TODO load previous games & name at this point via api
         LaunchedEffect(Unit) {
             // retry loading account & all it's session (2nd request) until successful
+            setPath("")
         }
 
         return MainScreen.State(
@@ -212,11 +216,14 @@ fun MainView(state: MainScreen.State, modifier: Modifier = Modifier) {
                         modifier = Modifier.width(512.dp),
                     ) {
                         var name by rememberRetained { mutableStateOf("") }
+                        val nameValid = name.length <= NameMaxLen
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("Enter a name") },
+                            singleLine = true,
+                            isError = !nameValid,
                             leadingIcon = {
                                 Icon(Icons.Default.AccountCircle, contentDescription = "")
                             },
@@ -225,7 +232,7 @@ fun MainView(state: MainScreen.State, modifier: Modifier = Modifier) {
                         Button(
                             onClick = { state.eventSink(CreateSession(name)) },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = name.isNotBlank() && name.length <= 50,
+                            enabled = name.isNotBlank() && nameValid,
                             // match OutlinedTextField default
                             shape = MaterialTheme.shapes.extraSmall
                         ) {

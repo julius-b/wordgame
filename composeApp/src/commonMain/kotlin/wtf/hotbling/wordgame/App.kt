@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalUuidApi::class)
+
 package wtf.hotbling.wordgame
 
 import androidx.compose.foundation.background
@@ -20,22 +22,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import co.touchlab.kermit.Logger
 import com.slack.circuit.backstack.rememberSaveableBackStack
 import com.slack.circuit.foundation.Circuit
 import com.slack.circuit.foundation.CircuitCompositionLocals
 import com.slack.circuit.foundation.NavigableCircuitContent
 import com.slack.circuit.foundation.rememberCircuitNavigator
+import com.slack.circuit.retained.rememberRetained
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import me.tatarka.inject.annotations.Inject
 import org.jetbrains.compose.ui.tooling.preview.Preview
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 val ColorGrey = Color(0xFF94A3B8) // a4aec4
 val ColorGrey2 = Color(0xFF6A7A80)
 val ColorYellow = Color(0xFFEAB308) // f3c237
 val ColorGreen = Color(0xFF22C55E) // 79b851
 val ColorRed = Color(0xcFF94600)
-val ColorKey = ColorGrey //Color(0xFF90A4AE)
 val ColorKeyMiss = Color(0xFF3A3A3A)
 val ColorKeyHover = Color(0xFFBBC0C6)
 
@@ -45,9 +50,29 @@ typealias WordGameApp = @Composable () -> Unit
 @Composable
 @Preview
 fun WordGameApp(circuit: Circuit) {
+    val log = Logger.withTag("WordGameApp")
     MaterialTheme {
         val backStack = rememberSaveableBackStack(MainScreen)
         val navigator = rememberCircuitNavigator(backStack) { }
+
+        val path = rememberRetained { getPath() ?: "" }
+
+        rememberRetained(Unit) {
+            log.i { "path: $path" }
+            val segments = path.split("/")
+            when (segments[0]) {
+                "room" -> {
+                    if (segments.size != 2) return@rememberRetained
+                    try {
+                        val sessionId = Uuid.parse(segments[1])
+                        navigator.goTo(GameScreen(sessionId))
+                    } catch (e: Throwable) {
+                        log.w(e) { "failed to parse #room segment: ${segments[1]}" }
+                    }
+                }
+            }
+            Unit
+        }
 
         CircuitCompositionLocals(circuit) {
             NavigableCircuitContent(
