@@ -151,3 +151,8 @@ expect suspend fun setClipboard(text: String): Boolean
 
 @Composable
 expect fun calculateWindowSizeClass(): WindowSizeClass
+
+expect suspend fun notify(title: String, text: String)
+expect fun hasNotifyPermission(): Boolean
+expect suspend fun reqNotifyPermission(): Boolean
+expect fun isNotifySupported(): Boolean

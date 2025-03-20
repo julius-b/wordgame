@@ -26,3 +26,8 @@ actual suspend fun setClipboard(text: String) = false
 
 @Composable
 actual fun calculateWindowSizeClass() = calculateWindowSizeClass()
+
+actual suspend fun notify(title: String, text: String) {}
+actual fun hasNotifyPermission() = false
+actual suspend fun reqNotifyPermission() = false
+actual fun isNotifySupported() = false

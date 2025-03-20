@@ -4,8 +4,10 @@ package wtf.hotbling.wordgame
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
@@ -38,6 +41,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,6 +63,8 @@ import software.amazon.lastmile.kotlin.inject.anvil.AppScope
 import wtf.hotbling.wordgame.MainScreen.Event.CreateSession
 import wtf.hotbling.wordgame.MainScreen.Event.GoToSource
 import wtf.hotbling.wordgame.MainScreen.Event.JoinSession
+import wtf.hotbling.wordgame.MainScreen.Event.SetMax
+import wtf.hotbling.wordgame.MainScreen.Event.SetSize
 import wtf.hotbling.wordgame.MainScreen.Event.ToggleManual
 import wtf.hotbling.wordgame.api.AccountRepository
 import wtf.hotbling.wordgame.api.ApiSession
@@ -74,18 +81,25 @@ data object MainScreen : Screen {
     data class State(
         val loading: Boolean,
         val manualPrompt: Boolean,
+        val size: Int,
+        val max: Int,
         val sessions: List<ApiSession>?,
         val snackbarHostState: SnackbarHostState,
         val eventSink: (Event) -> Unit
     ) : CircuitUiState
 
     sealed interface Event : CircuitUiEvent {
+        data class SetMax(val max: Int) : Event
+        data class SetSize(val size: Int) : Event
         data object ToggleManual : Event
         data class CreateSession(val name: String) : Event
         data class JoinSession(val link: String) : Event
         data object GoToSource : Event
     }
 }
+
+val Modes = listOf("Un", "Deux", "Rory")
+val Attempts = listOf("6", "8", "10", "12", "14", "16")
 
 @CircuitInject(MainScreen::class, AppScope::class)
 @Inject
@@ -102,6 +116,8 @@ class MainPresenter(
         val uriHandler = LocalUriHandler.current
         var loading by rememberRetained { mutableStateOf(false) }
         var manualPrompt by rememberRetained { mutableStateOf(false) }
+        var size by rememberRetained { mutableStateOf(2) }
+        var max by rememberRetained { mutableStateOf(Attempts[4].toInt()) }
         val snackbarHostState = remember { SnackbarHostState() }
 
         fun showSnackbar(text: String) {
@@ -118,20 +134,24 @@ class MainPresenter(
         }
 
         return MainScreen.State(
-            loading, manualPrompt, null, snackbarHostState
+            loading, manualPrompt, size, max, null, snackbarHostState
         ) { event ->
             when (event) {
+                is SetMax -> max = event.max
+                is SetSize -> size = event.size
                 is CreateSession -> {
                     if (loading) return@State
                     loading = true
                     scope.launch {
+                        if (isNotifySupported() && !hasNotifyPermission()) reqNotifyPermission()
+
                         // find or create account
                         val account = accountRepository.saveAccount(event.name)
                         if (account !is RepoResult.Data) {
                             showSnackbar("No internet, please try again later")
                             return@launch
                         }
-                        val session = sessionRepository.newSession()
+                        val session = sessionRepository.newSession(size, max)
                         if (session !is RepoResult.Data) {
                             showSnackbar("No internet, please try again later")
                             return@launch
@@ -228,7 +248,24 @@ fun MainView(state: MainScreen.State, modifier: Modifier = Modifier) {
                                 Icon(Icons.Default.AccountCircle, contentDescription = "")
                             },
                         )
+                        Spacer(Modifier.height(12.dp))
+
+                        ButtonGroup(
+                            "Mode",
+                            Modes,
+                            Modes.indexOf(Modes[state.size - 1]),
+                            onClick = { state.eventSink(SetSize(it + 1)) }
+                        )
                         Spacer(Modifier.height(8.dp))
+
+                        ButtonGroup(
+                            "Attempts",
+                            Attempts,
+                            Attempts.indexOf("${state.max}"),
+                            onClick = { state.eventSink(SetMax(Attempts[it].toInt())) }
+                        )
+                        Spacer(Modifier.height(12.dp))
+
                         Button(
                             onClick = { state.eventSink(CreateSession(name)) },
                             modifier = Modifier.fillMaxWidth(),
@@ -245,8 +282,8 @@ fun MainView(state: MainScreen.State, modifier: Modifier = Modifier) {
                         Spacer(Modifier.height(8.dp))
 
                         SessionsList(state.sessions)
-
                         Spacer(Modifier.height(8.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End
@@ -271,6 +308,56 @@ fun MainView(state: MainScreen.State, modifier: Modifier = Modifier) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ButtonGroup(
+    title: String?,
+    options: List<String>,
+    selected: Int,
+    onClick: (Int) -> Unit
+) {
+    if (title != null) {
+        Text(
+            title,
+            //modifier = Modifier.align(Alignment.End),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        options.forEachIndexed { i, text ->
+            Button(
+                onClick = { onClick(i) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (selected == i) Color.Unspecified else Color.LightGray,
+                    contentColor = if (selected == i) Color.Unspecified else Color.Black
+                ),
+                shape = when (i) {
+                    0 -> RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp)
+                    options.lastIndex -> RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
+                    else -> RectangleShape
+                },
+                // allows for the most efficient use of space
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                Text(text)
+            }
+
+            /*if (i < options.lastIndex) {
+                HorizontalDivider(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(1.dp),
+                    color = Color.DarkGray
+                )
+            }*/
         }
     }
 }

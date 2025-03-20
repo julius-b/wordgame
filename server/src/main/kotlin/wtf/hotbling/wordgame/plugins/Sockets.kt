@@ -49,6 +49,7 @@ fun Application.configureSockets() {
             }
             log.info("new connection to session: $sessionId from account: $accountId")
 
+            // TODO allow ApiError.Constraint(max=session.size) for spectating
             val err = sessionsService.addPeer(sessionId, accountId)
             if (err != null) {
                 log.warn("failed to add peer: $accountId to session: $sessionId: $err")

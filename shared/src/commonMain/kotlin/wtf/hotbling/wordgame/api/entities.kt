@@ -55,34 +55,47 @@ data class AccountParams(
 @Serializable
 data class ApiSession(
     val id: Uuid,
-    val init: ApiAccount,
-    // set when shared link is accepted
-    val peer: ApiAccount?,
-    val turnId: Uuid,
-    val words: List<ApiSessionWord2>,
+    val turn: Int,
+    val size: Int,
+    val limit: Int?,
+    val peers: List<ApiAccount>,
+    val words: List<ApiSessionWord>,
     //val guesses: List<ApiGuess>,
     @SerialName("created_at") val createdAt: Instant,
-)
+) {
+    val turnId = peers[turn].id
+
+    val isSolved = words.all { it.solved != null }
+
+    // if limit is null, all solved is still over
+    val isOver = isSolved || words.any { it.guesses.size == limit }
+
+    sealed interface SessionState {
+        data class Loading(val connected: Int) : SessionState
+        data object Game : SessionState
+        data class Done(val solved: Boolean) : SessionState
+    }
+
+    fun status(): SessionState = when {
+        peers.size != size -> SessionState.Loading(peers.size)
+        isOver -> SessionState.Done(isSolved)
+        else -> SessionState.Game
+    }
+}
 
 @Serializable
 data class SessionParams(
-    @SerialName("account_id") val accountId: Uuid
+    @SerialName("account_id") val accountId: Uuid,
+    @SerialName("size") val size: Int,
+    @SerialName("max") val max: Int?
 )
 
-@Serializable
-data class ApiSessionWord2(
-    val word: String?,
-    val guesses: List<Pair<List<ApiChar>, Uuid>>,
-    val keyboard: Keyboard
-)
-
-// TODO DAO
 @Serializable
 data class ApiSessionWord(
     // revealed when session is done
-    val word: String,
-    val solved: Boolean,
-    val guesses: List<List<ApiChar>>,
+    val word: String?,
+    val solved: Int?,
+    val guesses: List<Pair<List<ApiChar>, Uuid>>,
     val keyboard: Keyboard
 )
 
@@ -91,7 +104,8 @@ data class ApiGuess(
     val txt: String,
     @SerialName("account_id") val accountId: Uuid,
     @SerialName("session_id") val sessionId: Uuid,
-    val pos: Int
+    val pos: Int,
+    val nextTurn: Int?
 )
 
 @Serializable

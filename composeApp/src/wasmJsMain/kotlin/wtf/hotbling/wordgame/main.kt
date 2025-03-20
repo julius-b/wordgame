@@ -15,6 +15,10 @@ import kotlinx.browser.window
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import org.w3c.dom.events.KeyboardEvent
+import org.w3c.notifications.GRANTED
+import org.w3c.notifications.Notification
+import org.w3c.notifications.NotificationOptions
+import org.w3c.notifications.NotificationPermission
 import wtf.hotbling.wordgame.di.WasmJsApplicationComponent
 import wtf.hotbling.wordgame.di.create
 import kotlin.coroutines.resume
@@ -85,3 +89,24 @@ actual suspend fun setClipboard(text: String): Boolean {
 
 @Composable
 actual fun calculateWindowSizeClass() = calculateWindowSizeClass()
+
+actual suspend fun notify(title: String, text: String) {
+    if (!isNotifySupported()) return
+    if (!hasNotifyPermission())
+        if (!reqNotifyPermission()) return
+    val options = NotificationOptions(body = text)
+    Notification(title, options)
+}
+
+actual fun hasNotifyPermission() = Notification.permission == NotificationPermission.GRANTED
+
+actual suspend fun reqNotifyPermission(): Boolean {
+    return suspendCoroutine { cont ->
+        Notification.requestPermission().then { perm ->
+            cont.resume(perm == NotificationPermission.GRANTED)
+            null
+        }
+    }
+}
+
+actual fun isNotifySupported(): Boolean = js("typeof Notification !== 'undefined'")

@@ -9,6 +9,7 @@ import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransacti
 import org.jetbrains.exposed.sql.transactions.transaction
 import wtf.hotbling.wordgame.services.Accounts
 import wtf.hotbling.wordgame.services.Guesses
+import wtf.hotbling.wordgame.services.Peers
 import wtf.hotbling.wordgame.services.SessionWords
 import wtf.hotbling.wordgame.services.Sessions
 import wtf.hotbling.wordgame.services.Words
@@ -26,6 +27,7 @@ object DatabaseSingleton {
             SchemaUtils.create(Words)
             SchemaUtils.create(Accounts)
             SchemaUtils.create(Sessions)
+            SchemaUtils.create(Peers)
             SchemaUtils.create(SessionWords)
             SchemaUtils.create(Guesses)
         }

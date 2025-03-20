@@ -17,16 +17,16 @@ import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.dao.id.UUIDTable
 import org.jetbrains.exposed.sql.Random
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.kotlin.datetime.timestamp
-import org.jetbrains.exposed.sql.or
 import wtf.hotbling.wordgame.api.ApiChar
 import wtf.hotbling.wordgame.api.ApiCharStatus
 import wtf.hotbling.wordgame.api.ApiError
 import wtf.hotbling.wordgame.api.ApiGuess
 import wtf.hotbling.wordgame.api.ApiSession
 import wtf.hotbling.wordgame.api.ApiSessionWord
-import wtf.hotbling.wordgame.api.ApiSessionWord2
 import wtf.hotbling.wordgame.api.Error
 import wtf.hotbling.wordgame.api.Keyboard
 import wtf.hotbling.wordgame.api.constraintErr
@@ -38,9 +38,13 @@ import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.toKotlinUuid
 
 object Sessions : UUIDTable() {
-    val initId = reference("init", Accounts)
-    val peerId = reference("peer", Accounts).nullable()
-    val turnId = reference("turn", Accounts)
+    val turn = integer("turn").default(0)
+
+    // no. of accounts
+    val size = integer("size")
+
+    // no. of attempts
+    val limit = integer("limit").nullable()
 
     val createdAt = timestamp("created_at").clientDefault {
         Clock.System.now()
@@ -50,26 +54,45 @@ object Sessions : UUIDTable() {
 class Session(id: EntityID<UUID>) : UUIDEntity(id) {
     companion object : UUIDEntityClass<Session>(Sessions)
 
-    var initId by Sessions.initId
-    var peerId by Sessions.peerId
-    var turnId by Sessions.turnId
+    var turn by Sessions.turn
+    var size by Sessions.size
+    var limit by Sessions.limit
     val createdAt by Sessions.createdAt
 
-    val init by Account referencedOn Sessions.initId
-    val peer by Account optionalReferencedOn Sessions.peerId
-
-    // TODO keyboard & guesses per word, a) for matches, b) stop when solved
+    val peers by Peer referrersOn Peers orderBy Peers.pos
     val words by Word via SessionWords orderBy SessionWords.wordId
-
-    // TODO don't leak wordId
-    val swords by SessionWordEntity referrersOn SessionWords
+    val swords by SessionWord referrersOn SessionWords
     val guesses by Guess referrersOn Guesses.sessionId
+}
+
+object Peers : CompositeIdTable() {
+    val sessionId = reference("session", Sessions)
+    val accountId = reference("account", Accounts)
+    val pos = integer("pos")
+
+    init {
+        addIdColumn(sessionId)
+        addIdColumn(accountId)
+    }
+
+    override val primaryKey = PrimaryKey(sessionId, accountId)
+}
+
+class Peer(id: EntityID<CompositeID>) : CompositeEntity(id) {
+    companion object : CompositeEntityClass<Peer>(Peers)
+
+    var sessionId by Peers.sessionId
+    var accountId by Peers.accountId
+    var pos by Peers.pos
+
+    val session by Session referencedOn Peers
+    val account by Account referencedOn Peers
 }
 
 object SessionWords : CompositeIdTable() {
     val sessionId = reference("session", Sessions)
     val wordId = reference("word", Words)
-    val solved = bool("solved").default(false)
+    val solved = integer("solved").nullable().default(null)
 
     init {
         addIdColumn(sessionId)
@@ -79,12 +102,12 @@ object SessionWords : CompositeIdTable() {
     override val primaryKey = PrimaryKey(sessionId, wordId)
 }
 
-class SessionWordEntity(id: EntityID<CompositeID>) : CompositeEntity(id) {
-    companion object : CompositeEntityClass<SessionWordEntity>(SessionWords)
+class SessionWord(id: EntityID<CompositeID>) : CompositeEntity(id) {
+    companion object : CompositeEntityClass<SessionWord>(SessionWords)
 
     val sessionId by SessionWords.sessionId
     val wordId by SessionWords.wordId
-    val solved by SessionWords.solved
+    var solved by SessionWords.solved
 
     val word by Word referencedOn SessionWords
 }
@@ -109,6 +132,15 @@ class Guess(id: EntityID<UUID>) : UUIDEntity(id) {
     var pos by Guesses.pos
 }
 
+data class SessionWordDAO(
+    val word: String,
+    val solved: Int?,
+    val guesses: List<List<ApiChar>>,
+    val keyboard: Keyboard
+) {
+    val isSolved: Boolean = solved != null
+}
+
 class SessionsService {
     private val log = KtorSimpleLogger("sessions-svc")
 
@@ -121,20 +153,27 @@ class SessionsService {
     }
 
     suspend fun byAccount(accountId: UUID): List<ApiSession> = tx {
-        Session
-            .find { (Sessions.initId eq accountId) or (Sessions.peerId eq accountId) }
-            .map(Session::toDTO)
+        Peer.find { (Peers.accountId eq accountId) }
+            .map { it.session.toDTO() }
     }
 
-    suspend fun create(initId: UUID): ApiSession = tx {
+    suspend fun create(accountId: UUID, size: Int, limit: Int?): ApiSession = tx {
         //val word = Words.selectAll().limit(1).orderBy(Random())
         //val word = Word.all().orderBy(Random() to SortOrder.ASC).limit(1).first()
         val words = Word.all().orderBy(Random() to SortOrder.ASC).limit(4).toList()
         log.info("create - words: ${words.map { Pair(it.id, it.txt) }}")
 
+        val account = Account.findById(accountId)!!
+
         val session = Session.new {
-            this.initId = EntityID(initId, Accounts)
-            this.turnId = EntityID(initId, Accounts)
+            this.size = size
+            this.limit = limit
+        }
+
+        Peer.new {
+            this.sessionId = session.id
+            this.accountId = account.id
+            this.pos = 0
         }
 
         for (word in words) {
@@ -153,45 +192,60 @@ class SessionsService {
     ): Either<Error, ApiGuess> = tx {
         val session = Session.findById(sessionId)!!
         val account = Account.findById(accountId)!!
-        if (session.turnId.value != accountId)
+        if (session.turn != session.peers.indexOfFirst { it.accountId == account.id })
             return@tx ("accountId" err accountId.constraintErr(eq = "turn")).left()
 
-        if (Word.find { Words.txt eq txt }.none())
+        val match = Word.find { Words.txt eq txt }.firstOrNull()
+        if (match == null)
             return@tx ("txt" err txt.referenceErr()).left()
 
         val latest = Guess.find {
             Guesses.sessionId eq sessionId
         }.orderBy(Guesses.pos to SortOrder.DESC).limit(1).firstOrNull()
+        val guessPos = (latest?.pos ?: -1) + 1
 
-        val nextTurn = if (session.turnId == session.initId) session.peerId!! else session.initId
+        // Entity join TODO
+        SessionWord.findSingleByAndUpdate(
+            (SessionWords.sessionId eq session.id) and
+                    (SessionWords.wordId eq match.id) and
+                    (SessionWords.solved eq null)
+        ) {
+            it.solved = guessPos
+        }
+
+        val nextTurn =
+            if (session.turn + 1 == session.peers.count().toInt()) 0 else session.turn + 1
         Session.findByIdAndUpdate(sessionId) {
-            it.turnId = nextTurn
+            it.turn = nextTurn
         }
         Guess.new {
             this.txt = txt
             this.sessionId = session.id
             this.accountId = account.id
-            this.pos = (latest?.pos ?: -1) + 1
-        }.toDTO().right()
+            this.pos = guessPos
+        }.toDTO(nextTurn).right()
     }
 
     suspend fun addPeer(sessionId: UUID, accountId: UUID): Error? = tx {
-        val account = Account.findById(accountId)
-            ?: return@tx "accountId" err ApiError.Reference(accountId.toString())
         val session = Session.findById(sessionId)
-            ?: return@tx "sessionId" err ApiError.Reference(sessionId.toString())
-        if (session.initId.value == accountId) return@tx null
+            ?: return@tx "sessionId" err sessionId.referenceErr()
+        val account = Account.findById(accountId)
+            ?: return@tx "accountId" err accountId.referenceErr()
 
-        if (session.peerId != null) {
-            if (session.peerId?.value == accountId) return@tx null
-            return@tx "peerId" err ApiError.Conflict()
-        }
-
-        if (session.peerId == null) {
-            Session.findByIdAndUpdate(sessionId) {
-                it.peerId = account.id
-            } ?: return@tx "accountId" err ApiError.Internal()
+        if (session.peers.any { it.accountId.value == accountId })
             return@tx null
+        // TODO maybe ApiError.Conflict would be simpler
+        if (session.peers.count().toInt() == session.size)
+            return@tx "size" err ApiError.Constraint(max = session.size.toLong())
+
+        val existingPos = session.peers.map { it.pos }
+        val possiblePos = (0 until session.size).filter { existingPos.contains(it) }
+        val pos = possiblePos.random()
+
+        Peer.new {
+            this.sessionId = session.id
+            this.accountId = account.id
+            this.pos = pos
         }
 
         return@tx null
@@ -206,13 +260,14 @@ fun Session.toDTO(): ApiSession {
     val simpleGuesses = guesses.map { Pair(it.txt, it.accountId.value) }
     return ApiSession(
         id.value.toKotlinUuid(),
-        init.toDTO(),
-        peer?.toDTO(),
-        turnId.value.toKotlinUuid(),
-        // TODO word null while state != solved
+        turn,
+        size,
+        limit,
+        peers.map { it.account.toDTO() },
         swords.map { it.toDTO(simpleGuesses.map { it.first }) }.map {
-            ApiSessionWord2(
-                if (it.solved) it.word else null,
+            ApiSessionWord(
+                if (it.isSolved) it.word else null,
+                it.solved,
                 it.guesses
                     .whileTake { guess ->
                         guess.map { it.char }.toCharArray().concatToString() != it.word
@@ -226,10 +281,10 @@ fun Session.toDTO(): ApiSession {
     )
 }
 
-fun SessionWordEntity.toDTO(guesses: List<String>): ApiSessionWord {
+fun SessionWord.toDTO(guesses: List<String>): SessionWordDAO {
     val clouds = buildClouds(word.txt, guesses)
     val guessRatings = cloudsToRatings(clouds, guesses)
-    return ApiSessionWord(
+    return SessionWordDAO(
         word.txt,
         solved,
         guessRatings,
@@ -280,8 +335,8 @@ fun buildKeyboard(ratings: List<List<ApiChar>>): Keyboard {
     return board
 }
 
-fun Guess.toDTO() =
-    ApiGuess(txt, accountId.value.toKotlinUuid(), sessionId.value.toKotlinUuid(), pos)
+fun Guess.toDTO(nextTurn: Int?) =
+    ApiGuess(txt, accountId.value.toKotlinUuid(), sessionId.value.toKotlinUuid(), pos, nextTurn)
 
 // similar to kotlin's `takeWhile`
 inline fun <T> Iterable<T>.whileTake(predicate: (T) -> Boolean): List<T> {

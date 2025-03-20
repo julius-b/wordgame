@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
@@ -37,6 +39,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -94,6 +97,7 @@ import wtf.hotbling.wordgame.api.AccountRepository
 import wtf.hotbling.wordgame.api.ApiAccount
 import wtf.hotbling.wordgame.api.ApiChar
 import wtf.hotbling.wordgame.api.ApiCharStatus
+import wtf.hotbling.wordgame.api.ApiGuess
 import wtf.hotbling.wordgame.api.ApiSession
 import wtf.hotbling.wordgame.api.ConnectionUpdate
 import wtf.hotbling.wordgame.api.Domain
@@ -125,15 +129,16 @@ data class GameScreen(val sessionId: Uuid) : Screen {
             override val selfId: Uuid?,
             // relevant for init (can connect)
             val sessionId: Uuid?,
-            val peerId: Uuid?,
+            val peers: Int?,
+            val size: Int?,
             override val snackbarHostState: SnackbarHostState,
             val eventSink: (LoadingEvent) -> Unit
         ) : State
 
         data class Game(
             override val selfId: Uuid,
+            val connected: Boolean,
             val self: ApiAccount,
-            val peer: ApiAccount,
             val session: ApiSession,
             val accountPrompt: Boolean,
             val guess: String,
@@ -193,6 +198,7 @@ class GamePresenter(
         var selfId by rememberRetained { mutableStateOf(accountRepository.getAccountIdSync()) }
         var session: ApiSession? by rememberRetained { mutableStateOf(null) }
         var accountPrompt by rememberRetained { mutableStateOf(false) }
+        var connected by rememberRetained { mutableStateOf(false) }
         val snackbarHostState = remember { SnackbarHostState() }
 
         fun showSnackbar(text: String) {
@@ -200,6 +206,16 @@ class GamePresenter(
                 snackbarHostState.currentSnackbarData?.dismiss()
                 snackbarHostState.showSnackbar(text, duration = SnackbarDuration.Short)
             }
+        }
+
+        LaunchedEffect(connected) {
+            if (connected) showSnackbar("Connection established")
+            else showSnackbar("Connection lost")
+        }
+
+        LaunchedEffect(session?.turnId) {
+            if (session?.turnId == selfId && session?.status() == ApiSession.SessionState.Game)
+                notify("Spotify", "Now Playing: 'your turn'")
         }
 
         LaunchedEffect(selfId) {
@@ -212,14 +228,8 @@ class GamePresenter(
                 onUpdate = { update ->
                     log.i { "update: $update" }
                     when (update) {
-                        ConnectionUpdate.Connected -> {}
-                        ConnectionUpdate.Disconnected -> {
-                            if (session != null) {
-                                showSnackbar("Connection lost")
-                                session = null
-                            }
-                        }
-
+                        ConnectionUpdate.Connected -> connected = true
+                        ConnectionUpdate.Disconnected -> connected = false
                         is ConnectionUpdate.Session -> {
                             if (session == update.session) return@connect
                             session = update.session
@@ -231,10 +241,8 @@ class GamePresenter(
             navigator.pop()
         }
 
-        val peerId = session?.peer?.id
-
         return when {
-            selfId != null && session != null && peerId != null -> {
+            selfId != null && session != null && session!!.peers.size == session!!.size -> {
                 val selfId = selfId!!
                 // TODO capture non-null
                 var guess by rememberRetained { mutableStateOf("") }
@@ -244,9 +252,11 @@ class GamePresenter(
                         for (attempt in session!!.words[quadrant].guesses) {
                             list += GuessRow.Attempt(attempt.first, attempt.second)
                         }
-                        list += GuessRow.Current(guess)
-                        while (list.size < 5) {
-                            list += GuessRow.Empty
+                        if (session!!.words[quadrant].solved == null) {
+                            list += GuessRow.Current(guess)
+                            while (list.size < 5) {
+                                list += GuessRow.Empty
+                            }
                         }
                         list
                     }
@@ -263,12 +273,14 @@ class GamePresenter(
                             if (loading) return
                             loading = true
                             scope.launch {
-                                val account = sessionRepository.createGuess(session!!.id, guess)
-                                when (account) {
-                                    is RepoResult.Data<*> -> {
+                                val guessResp = sessionRepository.createGuess(session!!.id, guess)
+                                when (guessResp) {
+                                    is RepoResult.Data<ApiGuess> -> {
                                         // session.turnId not sufficient, updates too late
                                         // this is bad but next server update will fix it
-                                        session = session!!.copy(turnId = Uuid.NIL)
+                                        // server return nextTurn so we don't pick an oob value
+                                        // ensure solo game can continue typing instantly
+                                        session = session!!.copy(turn = guessResp.data.nextTurn!!)
                                         guess = ""
                                     }
 
@@ -304,8 +316,8 @@ class GamePresenter(
 
                 Game(
                     selfId,
-                    if (selfId == session!!.init.id) session!!.init else session!!.peer!!,
-                    if (selfId == session!!.init.id) session!!.peer!! else session!!.init,
+                    connected,
+                    session!!.peers.first { it.id == selfId },
                     session!!,
                     accountPrompt,
                     guess,
@@ -337,7 +349,13 @@ class GamePresenter(
             }
 
             else -> {
-                Loading(selfId, session?.id, session?.peer?.id, snackbarHostState) { event ->
+                Loading(
+                    selfId,
+                    session?.id,
+                    session?.peers?.size,
+                    session?.size,
+                    snackbarHostState
+                ) { event ->
                     when (event) {
                         is Join -> {
                             if (loading) return@Loading
@@ -376,7 +394,18 @@ class GamePresenter(
 fun GameView(state: GameScreen.State, modifier: Modifier = Modifier) {
     Scaffold(
         modifier = modifier,
-        snackbarHost = { SnackbarHost(hostState = state.snackbarHostState) }
+        snackbarHost = {
+            SnackbarHost(
+                hostState = state.snackbarHostState,
+            ) { snackbarData ->
+                Snackbar(
+                    snackbarData = snackbarData,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight(align = Alignment.Top),
+                )
+            }
+        }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -463,9 +492,16 @@ fun GameBar(state: Game) {
                 Text(
                     buildAnnotatedString {
                         append("Teaming up with ")
-                        withStyle(style = SpanStyle(fontWeight = FontWeight.SemiBold)) {
-                            append(state.peer.name)
-                        }
+                        state.session.peers
+                            .filter { it.id != state.selfId }
+                            .forEachIndexed { i, peer ->
+                                if (i > 0) {
+                                    append(", ")
+                                }
+                                withStyle(style = SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                                    append(peer.name)
+                                }
+                            }
                     },
                     maxLines = 1
                 )
@@ -474,6 +510,20 @@ fun GameBar(state: Game) {
                     onClick = { },
                     label = { Text(if (state.session.turnId == state.selfId) "Your turn" else "Their turn") }
                 )
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                if (isNotifySupported() && !hasNotifyPermission()) {
+                    val scope = rememberStableCoroutineScope()
+                    IconButton(
+                        onClick = {
+                            scope.launch { reqNotifyPermission() }
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = "allow notifications"
+                        )
+                    }
+                }
                 Spacer(Modifier.weight(1f))
                 Text(
                     state.self.name,

@@ -23,6 +23,10 @@ import kotlin.uuid.toJavaUuid
 fun Route.sessionsApi() {
     val log = KtorSimpleLogger("sessions-api")
 
+    get<Sessions> {
+        val sessions = sessionsService.all()
+        call.respond(ApiSuccessResponse(sessions.size, sessions))
+    }
     get<Sessions.Id> { params ->
         val session = sessionsService.get(params.id.toJavaUuid())
         if (session == null) {
@@ -37,7 +41,7 @@ fun Route.sessionsApi() {
     }
     post<Sessions> {
         val req = call.receive<SessionParams>()
-        val session = sessionsService.create(req.accountId.toJavaUuid())
+        val session = sessionsService.create(req.accountId.toJavaUuid(), req.size, req.max)
         call.respond(ApiSuccessResponse(data = session))
     }
 

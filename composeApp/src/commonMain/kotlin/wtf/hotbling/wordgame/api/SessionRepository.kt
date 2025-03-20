@@ -32,13 +32,13 @@ class SessionRepository(
 ) {
     private val log = Logger.withTag("SessionRepo")
 
-    suspend fun newSession(): RepoResult<ApiSession> {
+    suspend fun newSession(size: Int, max: Int): RepoResult<ApiSession> {
         log.i { "new-session" }
         try {
             val accountId = accountRepository.getAccountId()!!
             val resp = client.post(Sessions()) {
                 contentType(ContentType.Application.Json)
-                setBody(SessionParams(accountId))
+                setBody(SessionParams(accountId, size, max))
             }
             if (!resp.status.isSuccess()) {
                 log.e { "new-session - failed: $resp" }
@@ -137,7 +137,7 @@ class SessionRepository(
                 if (e is CancellationException) return
                 log.e(e) { "session - unexpected resp: $e" }
                 onUpdate(ConnectionUpdate.Disconnected)
-                delay(5.seconds)
+                delay(1.seconds)
             }
         }
     }
