@@ -41,8 +41,10 @@ fun Route.sessionsApi() {
     }
     post<Sessions> {
         val req = call.receive<SessionParams>()
-        val session = sessionsService.create(req.accountId.toJavaUuid(), req.size, req.max)
-        call.respond(ApiSuccessResponse(data = session))
+        sessionsService.create(req.accountId.toJavaUuid(), req.size, req.max).fold(
+            { err -> call.respond(HttpStatusCode.BadRequest, ApiErrorResponse(mapOf(err))) },
+            { data -> call.respond(ApiSuccessResponse(data = data)) }
+        )
     }
 
     post<Guesses> {

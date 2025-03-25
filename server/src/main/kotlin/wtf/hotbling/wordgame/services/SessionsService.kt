@@ -59,9 +59,9 @@ class Session(id: EntityID<UUID>) : UUIDEntity(id) {
     var limit by Sessions.limit
     val createdAt by Sessions.createdAt
 
-    val peers by Peer referrersOn Peers orderBy Peers.pos
-    val words by Word via SessionWords orderBy SessionWords.wordId
-    val swords by SessionWord referrersOn SessionWords
+    // TODO with every .findById by Sockets, another "ORDER BY PEERS.POS ASC[, PEERS.POS ASC]" is appended
+    val peers by Peer referrersOn Peers// orderBy Peers.pos
+    val words by SessionWord referrersOn SessionWords// orderBy SessionWords.wordId
     val guesses by Guess referrersOn Guesses.sessionId
 }
 
@@ -73,6 +73,8 @@ object Peers : CompositeIdTable() {
     init {
         addIdColumn(sessionId)
         addIdColumn(accountId)
+
+        uniqueIndex(sessionId, accountId, pos)
     }
 
     override val primaryKey = PrimaryKey(sessionId, accountId)
@@ -144,11 +146,11 @@ data class SessionWordDAO(
 class SessionsService {
     private val log = KtorSimpleLogger("sessions-svc")
 
-    suspend fun all(): List<ApiSession> = tx {
-        Session.all().map(Session::toDTO)
+    suspend fun all(): List<ApiSession> = tx(readOnly = true) {
+        Session.all().orderBy(Sessions.createdAt to SortOrder.DESC).map(Session::toDTO)
     }
 
-    suspend fun get(id: UUID): ApiSession? = tx {
+    suspend fun get(id: UUID): ApiSession? = tx(readOnly = true) {
         Session.findById(id)?.toDTO()
     }
 
@@ -157,11 +159,14 @@ class SessionsService {
             .map { it.session.toDTO() }
     }
 
-    suspend fun create(accountId: UUID, size: Int, limit: Int?): ApiSession = tx {
+    suspend fun create(accountId: UUID, size: Int, limit: Int?): Either<Error, ApiSession> = tx {
         //val word = Words.selectAll().limit(1).orderBy(Random())
         //val word = Word.all().orderBy(Random() to SortOrder.ASC).limit(1).first()
         val words = Word.all().orderBy(Random() to SortOrder.ASC).limit(4).toList()
         log.info("create - words: ${words.map { Pair(it.id, it.txt) }}")
+        // TODO Internal Server Error
+        if (words.size != 4)
+            return@tx ("words" err words.size.constraintErr(eq = 4)).left()
 
         val account = Account.findById(accountId)!!
 
@@ -184,7 +189,7 @@ class SessionsService {
         }
 
         // return with words
-        session.toDTO()
+        session.toDTO().right()
     }
 
     suspend fun createGuess(
@@ -192,7 +197,8 @@ class SessionsService {
     ): Either<Error, ApiGuess> = tx {
         val session = Session.findById(sessionId)!!
         val account = Account.findById(accountId)!!
-        if (session.turn != session.peers.indexOfFirst { it.accountId == account.id })
+        if (session.turn != session.peers.sortedBy { it.pos }
+                .indexOfFirst { it.accountId == account.id })
             return@tx ("accountId" err accountId.constraintErr(eq = "turn")).left()
 
         val match = Word.find { Words.txt eq txt }.firstOrNull()
@@ -239,7 +245,7 @@ class SessionsService {
             return@tx "size" err ApiError.Constraint(max = session.size.toLong())
 
         val existingPos = session.peers.map { it.pos }
-        val possiblePos = (0 until session.size).filter { existingPos.contains(it) }
+        val possiblePos = (0 until session.size).filterNot { existingPos.contains(it) }
         val pos = possiblePos.random()
 
         Peer.new {
@@ -263,8 +269,8 @@ fun Session.toDTO(): ApiSession {
         turn,
         size,
         limit,
-        peers.map { it.account.toDTO() },
-        swords.map { it.toDTO(simpleGuesses.map { it.first }) }.map {
+        peers.sortedBy { it.pos }.map { it.account.toDTO() },
+        words.sortedBy { it.wordId.value }.map { it.toDTO(simpleGuesses.map { it.first }) }.map {
             ApiSessionWord(
                 if (it.isSolved) it.word else null,
                 it.solved,

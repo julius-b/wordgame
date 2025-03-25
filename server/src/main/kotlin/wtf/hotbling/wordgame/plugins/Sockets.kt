@@ -13,6 +13,7 @@ import io.ktor.util.logging.KtorSimpleLogger
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.close
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.Json
 import wtf.hotbling.wordgame.api.AccountHeader
 import wtf.hotbling.wordgame.api.SessionHeader
@@ -57,14 +58,14 @@ fun Application.configureSockets() {
                 return@webSocket
             }
 
-            while (true) {
+            while (isActive) {
                 val session = sessionsService.get(sessionId)
                 if (session == null) {
                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Unauthorized"))
                     return@webSocket
                 }
                 sendSerialized(session)
-                delay(1.seconds)
+                delay(0.75.seconds)
             }
         }
     }

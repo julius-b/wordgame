@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,7 +38,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -78,6 +76,7 @@ import com.slack.circuit.runtime.internal.rememberStableCoroutineScope
 import com.slack.circuit.runtime.presenter.Presenter
 import com.slack.circuit.runtime.screen.Screen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -107,6 +106,7 @@ import wtf.hotbling.wordgame.api.RepoResult
 import wtf.hotbling.wordgame.api.SessionRepository
 import wtf.hotbling.wordgame.components.SimpleDialog
 import wtf.hotbling.wordgame.parcel.CommonParcelize
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -201,10 +201,16 @@ class GamePresenter(
         var connected by rememberRetained { mutableStateOf(false) }
         val snackbarHostState = remember { SnackbarHostState() }
 
-        fun showSnackbar(text: String) {
-            scope.launch(Dispatchers.Main) {
+        fun showSnackbar(text: String, superShort: Boolean = false) {
+            val job = scope.launch(Dispatchers.Main) {
                 snackbarHostState.currentSnackbarData?.dismiss()
                 snackbarHostState.showSnackbar(text, duration = SnackbarDuration.Short)
+            }
+            if (superShort) {
+                scope.launch(Dispatchers.Main) {
+                    delay(800.milliseconds)
+                    job.cancel()
+                }
             }
         }
 
@@ -284,7 +290,9 @@ class GamePresenter(
                                         guess = ""
                                     }
 
-                                    is RepoResult.ValidationError -> showSnackbar("not a word")
+                                    is RepoResult.ValidationError ->
+                                        showSnackbar("not a word", true)
+
                                     else -> showSnackbar("No internet, please try again later")
                                 }
                             }.invokeOnCompletion {
@@ -394,18 +402,7 @@ class GamePresenter(
 fun GameView(state: GameScreen.State, modifier: Modifier = Modifier) {
     Scaffold(
         modifier = modifier,
-        snackbarHost = {
-            SnackbarHost(
-                hostState = state.snackbarHostState,
-            ) { snackbarData ->
-                Snackbar(
-                    snackbarData = snackbarData,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight(align = Alignment.Top),
-                )
-            }
-        }
+        snackbarHost = { SnackbarHost(hostState = state.snackbarHostState) }
     ) { innerPadding ->
         Column(
             modifier = Modifier

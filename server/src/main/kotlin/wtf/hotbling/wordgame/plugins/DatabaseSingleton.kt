@@ -33,6 +33,9 @@ object DatabaseSingleton {
         }
     }
 
-    suspend fun <T> tx(block: suspend () -> T): T =
-        newSuspendedTransaction(Dispatchers.IO) { block() }
+    suspend fun <T> tx(
+        transactionIsolation: Int? = null, readOnly: Boolean = false, block: suspend () -> T
+    ): T = newSuspendedTransaction(
+        Dispatchers.IO, transactionIsolation = transactionIsolation, readOnly = readOnly
+    ) { block() }
 }

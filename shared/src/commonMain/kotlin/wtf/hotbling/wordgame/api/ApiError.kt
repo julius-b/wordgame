@@ -70,5 +70,5 @@ sealed class ApiError {
     ) : ApiError()
 }
 
-fun Any.constraintErr(eq: String?) = ApiError.Constraint(value = this.toString(), eq = eq)
+fun Any.constraintErr(eq: Any?) = ApiError.Constraint(value = this.toString(), eq = eq?.toString())
 fun Any.referenceErr() = ApiError.Reference(value = this.toString())
